@@ -1,6 +1,6 @@
 # Architecture — Automated Literature Review
 
-> **Current Phase: 0 — Foundation**
+> **Current Phase: 1 — Research Corpus & PDF Processing**
 > Components marked *[Phase N]* are not yet implemented.
 
 ---
@@ -96,15 +96,53 @@ NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
 | `/docs`       | GET    | Swagger UI                |
 | `/redoc`      | GET    | ReDoc UI                  |
 
+**Phase 1 endpoint (implemented):**
+
+| Route            | Method | Description                            |
+|------------------|--------|----------------------------------------|
+| `/papers/upload` | POST   | PDF ingestion → papers + chunks rows   |
+
 **CORS:** Configured for development to allow `localhost:3000`.
 Production CORS must be explicitly restricted before deployment.
 
 **Future phases will add:**
-- `POST /papers/upload` — PDF ingestion
 - `GET /papers/{id}/summary` — Paper summary retrieval
 - `POST /analysis/compare` — Multi-paper comparison
 - `GET /analysis/gaps` — Research gap identification
 - `POST /reports/generate` — Report export
+
+---
+
+## Ingestion Pipeline — [Phase 1]
+
+```
+PDF bytes
+   │  POST /papers/upload (backend/api/papers.py)
+   ▼
+Validate (PDF-only, size, safe filename) ──400 on failure
+   ▼
+store_pdf() → data/raw/{uuid}_{safe}.pdf
+   ▼
+ingestion/parser.py  PyMuPDFParser (import fitz)
+   ├── page_count + per-page text (page numbers preserved)
+   └── PDF metadata (title / author / year)
+   ▼
+ingestion/chunker.py  SectionChunker
+   ├── deterministic section headings (or "Unknown")
+   └── fixed-size, page-safe chunks (word-boundary aligned)
+   ▼
+ingestion/service.py  persist_paper()
+   ▼
+PostgreSQL  papers + chunks rows   (created by scripts/init_db.py)
+```
+
+Design notes:
+- The parser is behind the `PDFParser` protocol in `ingestion/parser.py` so it
+  can be swapped for GROBID / Marker in a later phase without touching the rest
+  of the pipeline.
+- Processing is synchronous in Phase 1; `IngestionService.ingest` is the seam
+  for a future job queue.
+- No LLM, embeddings, or vector retrieval are part of Phase 1.
 
 ---
 
@@ -171,15 +209,49 @@ All agents will be implemented under `agents/`.
 | ORM           | SQLAlchemy 2.0                     |
 | Connection    | Managed via `DATABASE_URL` env var |
 
-**Phase 0:** Connection verified. No application schema exists yet.
+**Phase 0:** Connection verified. No application schema existed yet.
 
-**Phase 1 will introduce:**
-- `papers` table — metadata (title, authors, year, abstract)
-- `chunks` table — text chunks with source references
+**Phase 1 (implemented):**
+- `papers` table — metadata (title, authors, year, doi, source_url) +
+  storage reference (filename, storage_path) + page_count, extracted_at
+- `chunks` table — page-aware text chunks (paper_id FK, page_number, section,
+  chunk_index, text) for evidence / citation traceability
 
 **Phase 3 (retrieval) will add:**
 - `embeddings` table — vector columns using pgvector
 - Similarity search functions
+
+#### papers table (Phase 1)
+
+| Column        | Type         | Notes                                  |
+|---------------|--------------|----------------------------------------|
+| id            | INTEGER PK   | Autoincrement                          |
+| title         | VARCHAR(512) | Falls back to filename when missing    |
+| authors       | JSON         | List of author names (nullable)        |
+| year          | INTEGER      | From PDF creation date (nullable)      |
+| doi           | VARCHAR(512) | Nullable                               |
+| source_url    | VARCHAR(1024)| Nullable                               |
+| filename      | VARCHAR(512) | Original upload name (sanitised)       |
+| storage_path  | VARCHAR(1024)| data/raw/{uuid}_{safe}.pdf              |
+| page_count    | INTEGER      | Nullable                               |
+| extracted_at  | TIMESTAMP    | When the PDF was parsed                |
+| created_at    | TIMESTAMP    | Default now                            |
+| updated_at    | TIMESTAMP    | Auto-updates on change                 |
+
+#### chunks table (Phase 1)
+
+| Column       | Type         | Notes                                  |
+|--------------|--------------|----------------------------------------|
+| id           | INTEGER PK   | Autoincrement                          |
+| paper_id     | INTEGER FK   | → papers.id, ON DELETE CASCADE         |
+| page_number  | INTEGER      | 1-based source page (traceability)     |
+| section      | VARCHAR(128) | Detected section or `Unknown`          |
+| chunk_index  | INTEGER      | Zero-based deterministic order         |
+| text         | TEXT         | Chunk body (no source text lost)       |
+| created_at   | TIMESTAMP    | Default now                            |
+
+The schema is created via `scripts/init_db.py` (idempotent) and never at
+application import time, preserving the lazy database behaviour.
 
 #### pgvector
 
@@ -276,6 +348,8 @@ User downloads / views report
 | `DB_PASSWORD`             | Yes      | Database password                      |
 | `NEXT_PUBLIC_BACKEND_URL` | No       | Backend URL exposed to browser         |
 | `PGVECTOR_ENABLED`        | No       | Set to `true` when pgvector available  |
+| `PDF_STORAGE_DIR`         | No       | Upload directory (default: `data/raw`) |
+| `MAX_UPLOAD_MB`           | No       | Max upload size in MB (default: 50)    |
 | `OPENAI_API_KEY`          | Phase 2  | LLM API key                            |
 | `LLM_MODEL`               | Phase 2  | Model identifier (e.g., `gpt-4`)       |
 

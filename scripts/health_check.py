@@ -89,7 +89,7 @@ def check_python() -> None:
 # Dependencies
 # ---------------------------------------------------------------------------
 
-CRITICAL_IMPORTS = ["fastapi", "uvicorn", "sqlalchemy", "psycopg2", "dotenv"]
+CRITICAL_IMPORTS = ["fastapi", "uvicorn", "sqlalchemy", "psycopg", "dotenv"]
 
 
 def check_dependencies() -> None:

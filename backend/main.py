@@ -23,7 +23,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Import routes
-from backend.api import health
+from backend.api import health, papers
 
 BACKEND_ENV = os.getenv("APP_ENV", "development")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -60,6 +60,7 @@ if BACKEND_ENV == "development":
 
 # Include routes
 app.include_router(health.router)
+app.include_router(papers.router)
 
 
 if __name__ == "__main__":

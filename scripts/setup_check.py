@@ -79,12 +79,13 @@ REQUIRED_PACKAGES = [
     ("fastapi",           "fastapi"),
     ("uvicorn",           "uvicorn"),
     ("sqlalchemy",        "sqlalchemy"),
-    ("psycopg2",          "psycopg2"),
+    ("psycopg",           "psycopg"),
     ("dotenv",            "python-dotenv"),
     ("pydantic",          "pydantic"),
     ("pydantic_settings", "pydantic-settings"),
     ("pytest",            "pytest"),
     ("httpx",             "httpx"),
+    ("fitz",              "pymupdf"),  # PyMuPDF — Phase 1 PDF processing
 ]
 
 
@@ -227,6 +228,39 @@ def check_postgres() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Check 5b — Phase 1 schema presence (best-effort, non-fatal)
+# ---------------------------------------------------------------------------
+
+def check_schema() -> None:
+    print("\n[5b] Phase 1 Database Schema (papers / chunks)")
+    try:
+        import asyncio
+        from dotenv import load_dotenv
+        load_dotenv(ROOT / ".env")
+
+        sys.path.insert(0, str(ROOT))
+        from backend.config.database import check_database_connection
+        from backend.config.database import _get_engine  # type: ignore
+
+        connected = asyncio.run(check_database_connection())
+        if not connected:
+            _skip("schema check", "PostgreSQL not reachable — run scripts/init_db.py when it is")
+            return
+
+        from sqlalchemy import inspect
+        engine = _get_engine()
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+        required = {"papers", "chunks"}
+        if required.issubset(tables):
+            _ok("schema", "papers + chunks tables present")
+        else:
+            _fail("schema", f"missing tables: {sorted(required - tables)} — run: python scripts/init_db.py")
+    except Exception as e:
+        _skip("schema check", f"{type(e).__name__}: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Check 6 — Node.js / npm (optional — required for frontend)
 # ---------------------------------------------------------------------------
 
@@ -279,6 +313,7 @@ def main() -> int:
     check_environment()
     check_structure()
     check_postgres()
+    check_schema()
     check_node()
 
     print("\n" + "=" * 52)
